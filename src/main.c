@@ -73,7 +73,7 @@ void draw_sprite(const uint16_t *const data, const char *const filename)
 {
     FILE *fp = fopen(filename, "wb");
     fprintf(fp, "P6\n%d %d\n255\n", BUFFER_WIDTH_IN_TILES * TILE_WIDTH * 8, BUFFER_HEIGHT_IN_TILES * TILE_HEIGHT);
-    uint8_t bw[] = {0xff, 0xff, 0xff, 0x77, 0x77, 0x77, 0x33, 0x33, 0x33, 0x00, 0x00, 0x00};
+    uint8_t bw[] = {0xff, 0xff, 0xff, 0xaa, 0xaa, 0xaa, 0x55, 0x55, 0x55, 0x33, 0x33, 0x33};
 
     for (int y = 0; y < BUFFER_HEIGHT_IN_TILES * TILE_HEIGHT; y++)
     {
@@ -233,6 +233,28 @@ void decode(struct bit_buffer_t *inputstream, const uint8_t width, const uint8_t
     }
 }
 
+void interleave_bitplanes(const uint8_t *buffer_a, const uint8_t *buffer_b, const size_t size, uint16_t *target)
+{
+    for (int i = size - 1; i >= 0; i--)
+    {
+        uint16_t buf_a_interleaved = buffer_a[i];
+        buf_a_interleaved = (buf_a_interleaved ^ (buf_a_interleaved << 4)) & 0x0f0f;
+        buf_a_interleaved = (buf_a_interleaved ^ (buf_a_interleaved << 2)) & 0x3333;
+        buf_a_interleaved = (buf_a_interleaved ^ (buf_a_interleaved << 1)) & 0x5555;
+
+        uint16_t buf_b_interleaved = buffer_b[i];
+        buf_b_interleaved = (buf_b_interleaved ^ (buf_b_interleaved << 4)) & 0x0f0f;
+        buf_b_interleaved = (buf_b_interleaved ^ (buf_b_interleaved << 2)) & 0x3333;
+        buf_b_interleaved = (buf_b_interleaved ^ (buf_b_interleaved << 1)) & 0x5555;
+
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+        *(target + i) = (buf_b_interleaved << 1) ^ buf_a_interleaved;
+#else
+        *(target + i) = (buf_a_interleaved << 1) ^ buf_b_interleaved;
+#endif
+    }
+}
+
 int main(int argc, char **argv)
 {
     (void)argc;
@@ -316,6 +338,11 @@ int main(int argc, char **argv)
         draw_bitplane(v_sprite.BP1, v_sprite.width, v_sprite.height, "buffer2_xor.ppm");
     }
 
+    size_t image_size = v_sprite.width * TILE_WIDTH * v_sprite.height * TILE_HEIGHT;
+    uint16_t *image = calloc(image_size, sizeof(uint16_t));
+    interleave_bitplanes(BUF_B, BUF_C, image_size, image);
+    draw_sprite(image, "test.ppm");
+
     size_t width_offset_in_tiles = (BUFFER_WIDTH_IN_TILES - v_sprite.width + 1) >> 1;
     size_t height_offset_in_tiles = BUFFER_HEIGHT_IN_TILES - v_sprite.height;
     size_t index = (width_offset_in_tiles * BUFFER_HEIGHT_IN_TILES + height_offset_in_tiles) * TILE_HEIGHT;
@@ -344,31 +371,11 @@ int main(int argc, char **argv)
     }
     draw_bitplane(BUF_B, BUFFER_WIDTH_IN_TILES, BUFFER_HEIGHT_IN_TILES, "buffer_b.ppm");
 
-    for (int i = BUFFER_SIZE - 1; i >= 0; i--)
-    {
-        uint16_t buf_a_interleaved = BUF_A[i];
-        buf_a_interleaved = (buf_a_interleaved ^ (buf_a_interleaved << 16)) & 0x0000ffff0000ffff;
-        buf_a_interleaved = (buf_a_interleaved ^ (buf_a_interleaved << 8)) & 0x00ff00ff00ff00ff;
-        buf_a_interleaved = (buf_a_interleaved ^ (buf_a_interleaved << 4)) & 0x0f0f0f0f0f0f0f0f;
-        buf_a_interleaved = (buf_a_interleaved ^ (buf_a_interleaved << 2)) & 0x3333333333333333;
-        buf_a_interleaved = (buf_a_interleaved ^ (buf_a_interleaved << 1)) & 0x5555555555555555;
-
-        uint16_t buf_b_interleaved = BUF_B[i];
-        buf_b_interleaved = (buf_b_interleaved ^ (buf_b_interleaved << 16)) & 0x0000ffff0000ffff;
-        buf_b_interleaved = (buf_b_interleaved ^ (buf_b_interleaved << 8)) & 0x00ff00ff00ff00ff;
-        buf_b_interleaved = (buf_b_interleaved ^ (buf_b_interleaved << 4)) & 0x0f0f0f0f0f0f0f0f;
-        buf_b_interleaved = (buf_b_interleaved ^ (buf_b_interleaved << 2)) & 0x3333333333333333;
-        buf_b_interleaved = (buf_b_interleaved ^ (buf_b_interleaved << 1)) & 0x5555555555555555;
-
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-        *(uint16_t *)(BUF_B + (i << 1)) = (buf_b_interleaved << 1) ^ buf_a_interleaved;
-#else
-        *(uint16_t *)(BUF_B + (i << 1)) = (buf_a_interleaved << 1) ^ buf_b_interleaved;
-#endif
-    }
+    interleave_bitplanes(BUF_A, BUF_B, BUFFER_SIZE, (uint16_t *)BUF_B);
 
     draw_sprite((uint16_t *)BUF_B, "sprite.ppm");
 
     free(input);
     free(buffer);
+    free(image);
 }
