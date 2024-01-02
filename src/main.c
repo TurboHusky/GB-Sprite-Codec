@@ -4,16 +4,19 @@
 #include <string.h>
 #include <stdio.h>
 
+// Buffer settings for bitplane using 8x8 pixel tiles @ 1 bit per pixel
+#define PX_PER_BYTE 8
+#define BUFFER_WIDTH_IN_TILES 7
+#define BUFFER_HEIGHT_IN_TILES 7
+#define TILE_WIDTH 1
+#define TILE_HEIGHT 8
+#define BUFFER_SIZE (BUFFER_WIDTH_IN_TILES * TILE_WIDTH * BUFFER_HEIGHT_IN_TILES * TILE_HEIGHT)
+#define RLE_MASK 0x0000000000000001
+
 enum rle_data_t
 {
     RUN = 0,
     DATA = 1
-};
-
-enum decode_status_t
-{
-    OK = 0,
-    ERROR
 };
 
 struct bit_buffer_t
@@ -30,40 +33,51 @@ struct sprite_t
     uint8_t height;
     uint8_t primary_buffer;
     uint8_t encoding_method;
-    uint8_t *BP0;
-    uint8_t *BP1;
     uint16_t *image;
 };
 
-// Buffer for bitplane using 8x8px tiles @ 1bpp
-#define PX_PER_BYTE 8
-#define BUFFER_WIDTH_IN_TILES 7
-#define BUFFER_HEIGHT_IN_TILES 7
-#define TILE_WIDTH 1
-#define TILE_HEIGHT 8
-#define BUFFER_SIZE (BUFFER_WIDTH_IN_TILES * TILE_WIDTH * BUFFER_HEIGHT_IN_TILES * TILE_HEIGHT)
-#define RLE_MASK 0x0000000000000001
-
-void write_buffer(const uint64_t source, int16_t bitcount, struct bit_buffer_t *output)
+void write_buffer(const uint64_t source, int16_t bitcount, struct bit_buffer_t *const output)
 {
-    uint64_t bits = source & 0xffffffffffffffff >> (64 - bitcount);
-
-    int16_t shift = (bitcount - 1) - output->bit_index;
-    while (shift >= 0)
+    while (bitcount > output->bit_index && (output->byte_index < output->size))
     {
-        output->data[output->byte_index] |= bits >> shift;
-        bitcount -= (output->bit_index + 1);
+        int16_t shift = bitcount - (output->bit_index + 1);
+        output->data[output->byte_index] |= source >> shift;
 
+        bitcount -= (output->bit_index + 1);
         output->bit_index = 7;
         output->byte_index++;
-        shift = (bitcount - 1) - output->bit_index;
+    }
+    if (output->byte_index >= output->size)
+    {
+        printf("ERROR: Write buffer full");
+        return;
     }
     if (bitcount > 0)
     {
-        shift = output->bit_index - (bitcount - 1);
-        output->data[output->byte_index] |= bits << shift;
+        int16_t shift = (output->bit_index + 1) - bitcount;
+        output->data[output->byte_index] |= source << shift;
         output->bit_index -= bitcount;
     }
+}
+
+void write_run_length(const uint64_t run, struct bit_buffer_t *const outputstream)
+{
+    uint64_t N = (run + 1) >> 1;
+    uint8_t bitcount = 0;
+
+    while (N)
+    {
+        bitcount++;
+        N >>= 1;
+    }
+
+    N = run + 1;
+    uint64_t L = 1 << bitcount;
+    uint64_t V = N - L;
+    L -= 2;
+
+    write_buffer(L, bitcount, outputstream);
+    write_buffer(V, bitcount, outputstream);
 }
 
 void draw_bitplane(const uint8_t *const data, const uint8_t width_in_tiles, const uint8_t height_in_tiles, const char *const filename)
@@ -116,13 +130,13 @@ void draw_sprite(const uint16_t *const data, const char *const filename)
     fclose(fp);
 }
 
-static inline void decrement_bit_index(struct bit_buffer_t *buffer, int8_t offset)
+static inline void advance_bit_index(struct bit_buffer_t *const buffer, const int8_t offset)
 {
-    buffer->byte_index += (offset - buffer->bit_index + 7) >> 3;
+    buffer->byte_index += (offset + 7 - buffer->bit_index) >> 3;
     buffer->bit_index = (buffer->bit_index - offset) & 0x07;
 }
 
-void diff_decode_buffer(const uint8_t width_in_tiles, const uint8_t height_in_tiles, uint8_t *buffer)
+void diff_decode_buffer(const uint8_t width_in_tiles, const uint8_t height_in_tiles, uint8_t *const buffer)
 {
     for (uint8_t y = 0; y < height_in_tiles * TILE_HEIGHT; y++)
     {
@@ -140,7 +154,7 @@ void diff_decode_buffer(const uint8_t width_in_tiles, const uint8_t height_in_ti
     }
 }
 
-void diff_encode_buffer(const uint8_t width_in_tiles, const uint8_t height_in_tiles, uint8_t *buffer)
+void diff_encode_buffer(const uint8_t width_in_tiles, const uint8_t height_in_tiles, uint8_t *const buffer)
 {
     for (uint8_t y = 0; y < height_in_tiles * TILE_HEIGHT; y++)
     {
@@ -155,13 +169,19 @@ void diff_encode_buffer(const uint8_t width_in_tiles, const uint8_t height_in_ti
     }
 }
 
-void rle_decode(struct bit_buffer_t *inputstream, const uint8_t width_in_tiles, const uint8_t height_in_tiles, uint8_t *output_buffer)
+void rle_decode(struct bit_buffer_t *const inputstream, const uint8_t width_in_tiles, const uint8_t height_in_tiles, uint8_t *const output_buffer)
 {
     uint16_t bitplane_size = width_in_tiles * TILE_WIDTH * height_in_tiles * TILE_HEIGHT * PX_PER_BYTE;
-    uint16_t bitplane_count = 0;
+    uint16_t bits_read = 0;
 
     enum rle_data_t packet_type = (inputstream->data[inputstream->byte_index] >> inputstream->bit_index) & 0x01;
-    decrement_bit_index(inputstream, 1);
+    advance_bit_index(inputstream, 1);
+
+    if (inputstream->byte_index == inputstream->size)
+    {
+        printf("ERROR: Packet type occurs at end of data stream");
+        return;
+    }
 
     uint8_t x = 0;
     uint8_t y = 0;
@@ -169,7 +189,7 @@ void rle_decode(struct bit_buffer_t *inputstream, const uint8_t width_in_tiles, 
 
     memset(output_buffer, 0, BUFFER_SIZE);
 
-    while (bitplane_count < bitplane_size)
+    while (bits_read < bitplane_size)
     {
         if (packet_type == RUN)
         {
@@ -180,25 +200,33 @@ void rle_decode(struct bit_buffer_t *inputstream, const uint8_t width_in_tiles, 
             do
             {
                 L <<= 1;
-                L |= (inputstream->data[inputstream->byte_index] >> inputstream->bit_index) & 0x01;
-                decrement_bit_index(inputstream, 1);
+                L |= (inputstream->data[inputstream->byte_index] >> inputstream->bit_index) & RLE_MASK;
+                advance_bit_index(inputstream, 1);
                 bit_count++;
-            } while (inputstream->byte_index < inputstream->size && L & RLE_MASK);
+            } while ((L & RLE_MASK) && (inputstream->byte_index < inputstream->size));
 
-            for (size_t i = 0; i < bit_count; i++)
+            while (bit_count && (inputstream->byte_index < inputstream->size))
             {
-
                 V <<= 1;
-                V |= (inputstream->data[inputstream->byte_index] >> inputstream->bit_index) & 0x01;
-                decrement_bit_index(inputstream, 1);
-                if(inputstream->byte_index >= inputstream->size)
-                {
-                    return;
-                }
+                V |= (inputstream->data[inputstream->byte_index] >> inputstream->bit_index) & RLE_MASK;
+                advance_bit_index(inputstream, 1);
+                bit_count--;
+            }
+
+            if(bit_count)
+            {
+                printf("ERROR: Incomplete RUN data");
+                return;
             }
 
             uint64_t N = L + V + 1;
-            bitplane_count += N << 1;
+            bits_read += N << 1;
+
+            if (bits_read > bitplane_size)
+            {
+                printf("ERROR: RUN data out of bounds");
+                return;
+            }
 
             uint64_t delta_x = (y + N) / (height_in_tiles * TILE_HEIGHT);
             y = (y + N) % (height_in_tiles * TILE_HEIGHT);
@@ -209,18 +237,22 @@ void rle_decode(struct bit_buffer_t *inputstream, const uint8_t width_in_tiles, 
         }
         else
         {
-            if (inputstream->bit_index < 1)
+            uint8_t bit_pair;
+
+            if (inputstream->bit_index == 0)
             {
-                inputstream->byte_index++;
-                if (inputstream->byte_index >= inputstream->size)
+                if ((inputstream->byte_index + 1) >= inputstream->size)
                 {
-                    printf("ERROR: RLE read out of bounds");
+                    printf("ERROR: Incomplete DATA");
                     return;
                 }
-                inputstream->bit_index += 8;
+                bit_pair = ((inputstream->data[inputstream->byte_index] << 1) & 0x02) | (inputstream->data[inputstream->byte_index + 1] >> 7);
             }
-
-            uint8_t bit_pair = (inputstream->bit_index == 8) ? ((inputstream->data[inputstream->byte_index - 1] << 1) & 0x02) | (inputstream->data[inputstream->byte_index] >> 7) : (inputstream->data[inputstream->byte_index] >> (inputstream->bit_index - 1)) & 0x03;
+            else
+            {
+                bit_pair = (inputstream->data[inputstream->byte_index] >> (inputstream->bit_index - 1)) & 0x03;
+            }
+            advance_bit_index(inputstream, 2);
 
             if (bit_pair)
             {
@@ -236,22 +268,18 @@ void rle_decode(struct bit_buffer_t *inputstream, const uint8_t width_in_tiles, 
                         x++;
                     }
                 }
-
-                bitplane_count += 2;
+                bits_read += 2;
             }
             else
             {
                 packet_type = RUN;
             }
-
-            decrement_bit_index(inputstream, 2);
         }
     }
 }
 
-void rle_encode(uint8_t *image, const uint8_t width_in_tiles, const uint8_t height_in_tiles, struct bit_buffer_t *outputstream)
+void rle_encode(const uint8_t *const image, const uint8_t width_in_tiles, const uint8_t height_in_tiles, struct bit_buffer_t *const outputstream)
 {
-    (void)outputstream;
     uint8_t initial_packet = (*image & 0xC0) != 0x00;
     uint64_t run = 0;
 
@@ -275,20 +303,7 @@ void rle_encode(uint8_t *image, const uint8_t width_in_tiles, const uint8_t heig
                     }
                     else
                     {
-                        uint64_t N = run + 1;
-                        uint8_t bitcount = 0;
-                        run = N;
-                        while (run)
-                        {
-                            bitcount++;
-                            run >>= 1;
-                        }
-                        uint64_t L = (1 << (bitcount - 1));
-                        uint64_t V = N - L;
-                        L -= 2;
-
-                        write_buffer(L, bitcount - 1, outputstream);
-                        write_buffer(V, bitcount - 1, outputstream);
+                        write_run_length(run, outputstream);
                         write_buffer(input, 2, outputstream);
                         current_packet = DATA;
                     }
@@ -307,24 +322,11 @@ void rle_encode(uint8_t *image, const uint8_t width_in_tiles, const uint8_t heig
     }
     if (run > 0)
     {
-        uint64_t N = run + 1;
-        uint8_t bitcount = 0;
-        run = N;
-        while (run)
-        {
-            bitcount++;
-            run >>= 1;
-        }
-        uint64_t L = (1 << (bitcount - 1));
-        uint64_t V = N - L;
-        L -= 2;
-
-        write_buffer(L, bitcount - 1, outputstream);
-        write_buffer(V, bitcount - 1, outputstream);
+        write_run_length(run, outputstream);
     }
 }
 
-void interleave_bitplanes(const uint8_t *buffer_a, const uint8_t *buffer_b, const size_t size, uint16_t *target)
+void interleave_bitplanes(const uint8_t *const buffer_a, const uint8_t *const buffer_b, const size_t size, uint16_t *const output)
 {
     for (int i = size - 1; i >= 0; i--)
     {
@@ -338,33 +340,27 @@ void interleave_bitplanes(const uint8_t *buffer_a, const uint8_t *buffer_b, cons
         buf_b_interleaved = (buf_b_interleaved ^ (buf_b_interleaved << 2)) & 0x3333;
         buf_b_interleaved = (buf_b_interleaved ^ (buf_b_interleaved << 1)) & 0x5555;
 
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-        target[i] = (buf_b_interleaved << 1) ^ buf_a_interleaved;
-#else
-        target[i] = (buf_a_interleaved << 1) ^ buf_b_interleaved;
-#endif
+        output[i] = (buf_b_interleaved << 1) ^ buf_a_interleaved;
     }
 }
 
-void separate_bitplanes(const uint16_t *const image, const size_t image_size, uint8_t *buffer_a, uint8_t *buffer_b)
+void separate_bitplanes(const uint16_t *const image, const size_t image_size, uint8_t *const buffer_a, uint8_t *const buffer_b)
 {
     for (size_t i = 0; i < image_size; i++)
     {
         uint16_t temp = image[i] & 0x5555;
         temp = (temp ^ (temp >> 1)) & 0x3333;
         temp = (temp ^ (temp >> 2)) & 0x0f0f;
-        temp = (temp ^ (temp >> 4)) & 0x00ff;
-        buffer_a[i] = temp;
+        buffer_a[i] = temp ^ (temp >> 4);
 
         temp = (image[i] >> 1) & 0x5555;
         temp = (temp ^ (temp >> 1)) & 0x3333;
         temp = (temp ^ (temp >> 2)) & 0x0f0f;
-        temp = (temp ^ (temp >> 4)) & 0x00ff;
-        buffer_b[i] = temp;
+        buffer_b[i] = temp ^ (temp >> 4);
     }
 }
 
-void apply_sprite_offset(uint8_t *buffer, uint8_t width, uint8_t height)
+void apply_sprite_offset(uint8_t *const buffer, uint8_t width, uint8_t height)
 {
     uint8_t *BUF_A = buffer;
     uint8_t *BUF_B = buffer + BUFFER_SIZE;
@@ -397,7 +393,7 @@ void apply_sprite_offset(uint8_t *buffer, uint8_t width, uint8_t height)
     }
 }
 
-void remove_sprite_offset(uint8_t *buffer, uint8_t width, uint8_t height)
+void remove_sprite_offset(uint8_t *const buffer, uint8_t width, uint8_t height)
 {
     uint8_t *BUF_A = buffer;
     uint8_t *BUF_B = buffer + BUFFER_SIZE;
@@ -456,6 +452,8 @@ struct sprite_t load_sprite(const char *const filename)
     uint8_t *BUF_A = buffer;
     uint8_t *BUF_B = buffer + BUFFER_SIZE;
     uint8_t *BUF_C = buffer + 2 * BUFFER_SIZE;
+    uint8_t *BP0;
+    uint8_t *BP1;
 
     v_sprite.width = input[0] >> 4;
     v_sprite.height = input[0] & 0x0f;
@@ -469,39 +467,39 @@ struct sprite_t load_sprite(const char *const filename)
 
     if (v_sprite.primary_buffer == 0)
     {
-        v_sprite.BP0 = BUF_B;
-        v_sprite.BP1 = BUF_C;
+        BP0 = BUF_B;
+        BP1 = BUF_C;
     }
     else
     {
-        v_sprite.BP0 = BUF_C;
-        v_sprite.BP1 = BUF_B;
+        BP0 = BUF_C;
+        BP1 = BUF_B;
     }
 
     printf("Decoding %ux%u tile sprite.\nPrimary buffer: %u\n", v_sprite.width, v_sprite.height, v_sprite.primary_buffer);
-    rle_decode(&bit_ptr, v_sprite.width, v_sprite.height, v_sprite.BP0);
+    rle_decode(&bit_ptr, v_sprite.width, v_sprite.height, BP0);
     v_sprite.encoding_method = (bit_ptr.data[bit_ptr.byte_index] >> bit_ptr.bit_index) & 0x01;
-    decrement_bit_index(&bit_ptr, 1);
+    advance_bit_index(&bit_ptr, 1);
 
     if (v_sprite.encoding_method != 0)
     {
         v_sprite.encoding_method = (v_sprite.encoding_method << 1) | ((bit_ptr.data[bit_ptr.byte_index] >> bit_ptr.bit_index) & 0x01);
-        decrement_bit_index(&bit_ptr, 1);
+        advance_bit_index(&bit_ptr, 1);
     }
     printf("Encoding mode: %u\n", v_sprite.encoding_method);
 
-    rle_decode(&bit_ptr, v_sprite.width, v_sprite.height, v_sprite.BP1);
+    rle_decode(&bit_ptr, v_sprite.width, v_sprite.height, BP1);
 
-    diff_decode_buffer(v_sprite.width, v_sprite.height, v_sprite.BP0);
+    diff_decode_buffer(v_sprite.width, v_sprite.height, BP0);
     if (v_sprite.encoding_method != 2)
     {
-        diff_decode_buffer(v_sprite.width, v_sprite.height, v_sprite.BP1);
+        diff_decode_buffer(v_sprite.width, v_sprite.height, BP1);
     }
     if (v_sprite.encoding_method > 1)
     {
         for (size_t i = 0; i < image_size; i++)
         {
-            v_sprite.BP1[i] = v_sprite.BP1[i] ^ v_sprite.BP0[i];
+            BP1[i] = BP1[i] ^ BP0[i];
         }
     }
 
@@ -511,15 +509,14 @@ struct sprite_t load_sprite(const char *const filename)
     v_sprite.image = (uint16_t *)malloc(BUFFER_SIZE << 1);
     memcpy(v_sprite.image, BUF_B, BUFFER_SIZE << 1);
 
-    free(buffer);
     free(input);
+    free(buffer);
 
     return v_sprite;
 }
 
-void save_sprite(const struct sprite_t const *v_sprite, const uint8_t encoding_method, const uint8_t primary_buffer, const char *filename)
+void save_sprite(const struct sprite_t *const v_sprite, const uint8_t encoding_method, const uint8_t primary_buffer, const char *const filename)
 {
-    size_t image_size = v_sprite->width * TILE_WIDTH * v_sprite->height * TILE_HEIGHT;
     uint8_t *buffer = calloc(BUFFER_SIZE * 3, sizeof(uint8_t));
     uint8_t *BUF_A = buffer;
     uint8_t *BUF_B = buffer + BUFFER_SIZE;
@@ -570,10 +567,19 @@ void save_sprite(const struct sprite_t const *v_sprite, const uint8_t encoding_m
     free(buffer);
 }
 
+void free_sprite(struct sprite_t *const sprite)
+{
+    free(sprite->image);
+}
+
 int main(int argc, char **argv)
 {
+    (void) argc;
     struct sprite_t sprite = load_sprite(argv[1]);
-    draw_sprite(sprite.image, "sprite.ppm");
-    save_sprite(&sprite, sprite.encoding_method, sprite.primary_buffer, "resave.bin");
-    free(sprite.image);
+    if (sprite.image)
+    {
+        draw_sprite(sprite.image, "sprite.ppm");
+        save_sprite(&sprite, sprite.encoding_method, sprite.primary_buffer, "resave.bin");
+    }
+    free_sprite(&sprite);
 }
