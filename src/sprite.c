@@ -28,6 +28,62 @@ struct bit_buffer_t
     int8_t bit_index;
 };
 
+void export_bitplane_to_ppm(const uint8_t *const data, const uint8_t width_in_tiles, const uint8_t height_in_tiles, const char *const filename)
+{
+    FILE *fp = fopen(filename, "wb");
+    fprintf(fp, "P6\n%d %d\n255\n", width_in_tiles * TILE_WIDTH * 8, height_in_tiles * TILE_HEIGHT);
+    uint8_t bw[] = {0x00, 0x00, 0x00, 0xff, 0xff, 0xff};
+
+    for (int y = 0; y < height_in_tiles * TILE_HEIGHT; y++)
+    {
+        for (int x = 0; x < width_in_tiles * TILE_WIDTH; x++)
+        {
+            uint8_t byte = data[y + x * height_in_tiles * TILE_HEIGHT];
+            for (int shift = 7; shift >= 0; shift--)
+            {
+                if ((byte >> shift) & 0x01)
+                {
+                    fwrite(bw, sizeof(uint8_t), 3, fp);
+                }
+                else
+                {
+                    fwrite(bw + 3, sizeof(uint8_t), 3, fp);
+                }
+            }
+        }
+    }
+
+    fclose(fp);
+}
+
+void export_sprite_to_ppm(const uint16_t *const data, const char *const filename)
+{
+    FILE *fp = fopen(filename, "wb");
+    fprintf(fp, "P6\n%d %d\n255\n", BUFFER_WIDTH_IN_TILES * TILE_WIDTH * PX_PER_BYTE, BUFFER_HEIGHT_IN_TILES * TILE_HEIGHT);
+    uint8_t bw[] = {0xff, 0xff, 0xff, 0xaa, 0xaa, 0xaa, 0x55, 0x55, 0x55, 0x33, 0x33, 0x33};
+
+    for (int y = 0; y < BUFFER_HEIGHT_IN_TILES * TILE_HEIGHT; y++)
+    {
+        for (int x = 0; x < BUFFER_WIDTH_IN_TILES * TILE_WIDTH; x++)
+        {
+            uint16_t pixels = data[y + x * BUFFER_HEIGHT_IN_TILES * TILE_HEIGHT];
+            for (int shift = 14; shift >= 0; shift -= 2)
+            {
+                uint16_t index = (pixels >> shift) & 0x03;
+                fwrite(bw + index * 3, sizeof(uint8_t), 3, fp);
+            }
+        }
+    }
+
+    fclose(fp);
+}
+
+static inline void advance_bit_index(struct bit_buffer_t *const buffer, const int8_t offset)
+{
+    buffer->byte_index += (offset + 7 - buffer->bit_index) >> 3;
+    buffer->bit_index = (buffer->bit_index - offset) & 0x07;
+}
+
 void write_buffer(const uint64_t source, int16_t bitcount, struct bit_buffer_t *const output)
 {
     while (bitcount > output->bit_index && (output->byte_index < output->size))
@@ -70,62 +126,6 @@ void write_run_length(const uint64_t run, struct bit_buffer_t *const outputstrea
 
     write_buffer(L, bitcount, outputstream);
     write_buffer(V, bitcount, outputstream);
-}
-
-void draw_bitplane(const uint8_t *const data, const uint8_t width_in_tiles, const uint8_t height_in_tiles, const char *const filename)
-{
-    FILE *fp = fopen(filename, "wb");
-    fprintf(fp, "P6\n%d %d\n255\n", width_in_tiles * TILE_WIDTH * 8, height_in_tiles * TILE_HEIGHT);
-    uint8_t bw[] = {0x00, 0x00, 0x00, 0xff, 0xff, 0xff};
-
-    for (int y = 0; y < height_in_tiles * TILE_HEIGHT; y++)
-    {
-        for (int x = 0; x < width_in_tiles * TILE_WIDTH; x++)
-        {
-            uint8_t byte = data[y + x * height_in_tiles * TILE_HEIGHT];
-            for (int shift = 7; shift >= 0; shift--)
-            {
-                if ((byte >> shift) & 0x01)
-                {
-                    fwrite(bw, sizeof(uint8_t), 3, fp);
-                }
-                else
-                {
-                    fwrite(bw + 3, sizeof(uint8_t), 3, fp);
-                }
-            }
-        }
-    }
-
-    fclose(fp);
-}
-
-void draw_sprite(const uint16_t *const data, const char *const filename)
-{
-    FILE *fp = fopen(filename, "wb");
-    fprintf(fp, "P6\n%d %d\n255\n", BUFFER_WIDTH_IN_TILES * TILE_WIDTH * PX_PER_BYTE, BUFFER_HEIGHT_IN_TILES * TILE_HEIGHT);
-    uint8_t bw[] = {0xff, 0xff, 0xff, 0xaa, 0xaa, 0xaa, 0x55, 0x55, 0x55, 0x33, 0x33, 0x33};
-
-    for (int y = 0; y < BUFFER_HEIGHT_IN_TILES * TILE_HEIGHT; y++)
-    {
-        for (int x = 0; x < BUFFER_WIDTH_IN_TILES * TILE_WIDTH; x++)
-        {
-            uint16_t pixels = data[y + x * BUFFER_HEIGHT_IN_TILES * TILE_HEIGHT];
-            for (int shift = 14; shift >= 0; shift -= 2)
-            {
-                uint16_t index = (pixels >> shift) & 0x03;
-                fwrite(bw + index * 3, sizeof(uint8_t), 3, fp);
-            }
-        }
-    }
-
-    fclose(fp);
-}
-
-static inline void advance_bit_index(struct bit_buffer_t *const buffer, const int8_t offset)
-{
-    buffer->byte_index += (offset + 7 - buffer->bit_index) >> 3;
-    buffer->bit_index = (buffer->bit_index - offset) & 0x07;
 }
 
 void diff_decode_buffer(const uint8_t width_in_tiles, const uint8_t height_in_tiles, uint8_t *const buffer)

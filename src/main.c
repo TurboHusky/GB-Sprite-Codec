@@ -6,7 +6,7 @@ int main(int argc, char **argv)
     struct sprite_t sprite = load_sprite(argv[1]);
     if (sprite.image)
     {
-        draw_sprite(sprite.image, "sprite.ppm");
+        export_sprite_to_ppm(sprite.image, "sprite.ppm");
         save_sprite(&sprite, sprite.encoding_method, sprite.primary_buffer, "resave.bin");
     }
     free_sprite(&sprite);
