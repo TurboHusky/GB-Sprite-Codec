@@ -1,4 +1,5 @@
-#include <stdint.h>
+#include "sprite.h"
+
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,15 +26,6 @@ struct bit_buffer_t
     size_t size;
     size_t byte_index;
     int8_t bit_index;
-};
-
-struct sprite_t
-{
-    uint8_t width;
-    uint8_t height;
-    uint8_t primary_buffer;
-    uint8_t encoding_method;
-    uint16_t *image;
 };
 
 void write_buffer(const uint64_t source, int16_t bitcount, struct bit_buffer_t *const output)
@@ -203,7 +195,8 @@ void rle_decode(struct bit_buffer_t *const inputstream, const uint8_t width_in_t
                 L |= (inputstream->data[inputstream->byte_index] >> inputstream->bit_index) & RLE_MASK;
                 advance_bit_index(inputstream, 1);
                 bit_count++;
-            } while ((L & RLE_MASK) && (inputstream->byte_index < inputstream->size));
+            }
+            while ((L & RLE_MASK) && (inputstream->byte_index < inputstream->size));
 
             while (bit_count && (inputstream->byte_index < inputstream->size))
             {
@@ -459,11 +452,13 @@ struct sprite_t load_sprite(const char *const filename)
     v_sprite.height = input[0] & 0x0f;
     v_sprite.primary_buffer = input[1] >> 7;
     size_t image_size = v_sprite.width * TILE_WIDTH * v_sprite.height * TILE_HEIGHT;
-    struct bit_buffer_t bit_ptr = {
+    struct bit_buffer_t bit_ptr =
+    {
         .data = input,
         .size = filesize,
         .byte_index = 1,
-        .bit_index = 6};
+        .bit_index = 6
+    };
 
     if (v_sprite.primary_buffer == 0)
     {
@@ -540,9 +535,11 @@ void save_sprite(const struct sprite_t *const v_sprite, const uint8_t encoding_m
     }
     diff_encode_buffer(v_sprite->width, v_sprite->height, BP0);
 
-    struct bit_buffer_t compressedImage = {
+    struct bit_buffer_t compressedImage =
+    {
         .data = calloc(BUFFER_SIZE * 2, sizeof(uint8_t)),
-        .size = BUFFER_SIZE * 2};
+        .size = BUFFER_SIZE * 2
+    };
 
     compressedImage.data[0] = v_sprite->width << 4 | v_sprite->height;
     compressedImage.data[1] = primary_buffer << 7;
@@ -570,16 +567,4 @@ void save_sprite(const struct sprite_t *const v_sprite, const uint8_t encoding_m
 void free_sprite(struct sprite_t *const sprite)
 {
     free(sprite->image);
-}
-
-int main(int argc, char **argv)
-{
-    (void) argc;
-    struct sprite_t sprite = load_sprite(argv[1]);
-    if (sprite.image)
-    {
-        draw_sprite(sprite.image, "sprite.ppm");
-        save_sprite(&sprite, sprite.encoding_method, sprite.primary_buffer, "resave.bin");
-    }
-    free_sprite(&sprite);
 }
