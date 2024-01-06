@@ -14,6 +14,14 @@
 #define BUFFER_SIZE (BUFFER_WIDTH_IN_TILES * TILE_WIDTH * BUFFER_HEIGHT_IN_TILES * TILE_HEIGHT)
 #define RLE_MASK 0x0000000000000001
 
+enum rle_error_t
+{
+    NO_ERROR,
+    UNEXPECTED_EOF,
+    RUN_EOF,
+    DATA_EOF
+};
+
 enum rle_data_t
 {
     RUN = 0,
@@ -97,7 +105,7 @@ void write_buffer(const uint64_t source, int16_t bitcount, struct bit_buffer_t *
     }
     if (output->byte_index >= output->size)
     {
-        printf("ERROR: Write buffer full");
+        printf("ERROR: Write buffer full\n");
         return;
     }
     if (bitcount > 0)
@@ -161,7 +169,7 @@ void diff_encode_buffer(const uint8_t width_in_tiles, const uint8_t height_in_ti
     }
 }
 
-void rle_decode(struct bit_buffer_t *const inputstream, const uint8_t width_in_tiles, const uint8_t height_in_tiles, uint8_t *const output_buffer)
+enum rle_error_t rle_decode(struct bit_buffer_t *const inputstream, const uint8_t width_in_tiles, const uint8_t height_in_tiles, uint8_t *const output_buffer)
 {
     uint16_t bitplane_size = width_in_tiles * TILE_WIDTH * height_in_tiles * TILE_HEIGHT * PX_PER_BYTE;
     uint16_t bits_read = 0;
@@ -171,8 +179,8 @@ void rle_decode(struct bit_buffer_t *const inputstream, const uint8_t width_in_t
 
     if (inputstream->byte_index == inputstream->size)
     {
-        printf("ERROR: Packet type occurs at end of data stream");
-        return;
+        printf("ERROR: Packet type occurs at end of data stream\n");
+        return UNEXPECTED_EOF;
     }
 
     uint8_t x = 0;
@@ -208,8 +216,8 @@ void rle_decode(struct bit_buffer_t *const inputstream, const uint8_t width_in_t
 
             if(bit_count)
             {
-                printf("ERROR: Incomplete RUN data");
-                return;
+                printf("ERROR: Incomplete RUN data\n");
+                return RUN_EOF;
             }
 
             uint64_t N = L + V + 1;
@@ -217,8 +225,8 @@ void rle_decode(struct bit_buffer_t *const inputstream, const uint8_t width_in_t
 
             if (bits_read > bitplane_size)
             {
-                printf("ERROR: RUN data out of bounds");
-                return;
+                printf("ERROR: RUN data out of bounds\n");
+                return RUN_EOF;
             }
 
             uint64_t delta_x = (y + N) / (height_in_tiles * TILE_HEIGHT);
@@ -236,8 +244,8 @@ void rle_decode(struct bit_buffer_t *const inputstream, const uint8_t width_in_t
             {
                 if ((inputstream->byte_index + 1) >= inputstream->size)
                 {
-                    printf("ERROR: Incomplete DATA");
-                    return;
+                    printf("ERROR: Incomplete DATA\n");
+                    return DATA_EOF;
                 }
                 bit_pair = ((inputstream->data[inputstream->byte_index] << 1) & 0x02) | (inputstream->data[inputstream->byte_index + 1] >> 7);
             }
@@ -269,6 +277,7 @@ void rle_decode(struct bit_buffer_t *const inputstream, const uint8_t width_in_t
             }
         }
     }
+    return NO_ERROR;
 }
 
 void rle_encode(const uint8_t *const image, const uint8_t width_in_tiles, const uint8_t height_in_tiles, struct bit_buffer_t *const outputstream)
@@ -287,7 +296,6 @@ void rle_encode(const uint8_t *const image, const uint8_t width_in_tiles, const 
             for (int y = 0; y < height_in_tiles * TILE_HEIGHT; y++)
             {
                 uint8_t input = (image[base_index + y] >> shift) & 0x03;
-
                 if (current_packet == RUN)
                 {
                     if (input == 0)
@@ -422,7 +430,7 @@ struct sprite_t load_sprite(const char *const filename)
     FILE *fp = fopen(filename, "rb");
     if(fp == NULL)
     {
-        printf("Unable to load file [%s]", filename);
+        printf("Unable to load file [%s]\n", filename);
         return v_sprite;
     }
     fseek(fp, 0L, SEEK_END);
@@ -472,7 +480,10 @@ struct sprite_t load_sprite(const char *const filename)
     }
 
     printf("Decoding %ux%u tile sprite.\nPrimary buffer: %u\n", v_sprite.width, v_sprite.height, v_sprite.primary_buffer);
-    rle_decode(&bit_ptr, v_sprite.width, v_sprite.height, BP0);
+    if (rle_decode(&bit_ptr, v_sprite.width, v_sprite.height, BP0) != NO_ERROR)
+    {
+        return v_sprite;
+    }
     v_sprite.encoding_method = (bit_ptr.data[bit_ptr.byte_index] >> bit_ptr.bit_index) & 0x01;
     advance_bit_index(&bit_ptr, 1);
 
@@ -483,7 +494,10 @@ struct sprite_t load_sprite(const char *const filename)
     }
     printf("Encoding mode: %u\n", v_sprite.encoding_method);
 
-    rle_decode(&bit_ptr, v_sprite.width, v_sprite.height, BP1);
+    if (rle_decode(&bit_ptr, v_sprite.width, v_sprite.height, BP1) != NO_ERROR)
+    {
+        return v_sprite;
+    }
 
     diff_decode_buffer(v_sprite.width, v_sprite.height, BP0);
     if (v_sprite.encoding_method != 2)
@@ -567,4 +581,6 @@ void save_sprite(const struct sprite_t *const v_sprite, const uint8_t encoding_m
 void free_sprite(struct sprite_t *const sprite)
 {
     free(sprite->image);
+    sprite->width = 0;
+    sprite->height = 0;
 }

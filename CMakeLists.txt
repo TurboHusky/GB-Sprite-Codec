@@ -4,6 +4,7 @@ project(GB_Sprite_Console LANGUAGES C VERSION 0.0.1 DESCRIPTION "Console interfa
 set(CMAKE_EXPORT_COMPILE_COMMANDS true)
 
 add_subdirectory(src)
+add_subdirectory(test)
 
 list(APPEND SOURCE_FILES src/main.c)
 add_compile_options(-g -Wall -Werror -Wextra -Winline -Wpedantic -march=x86-64 -m64 -std=iso9899:2018)
