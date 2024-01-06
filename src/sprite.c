@@ -14,6 +14,12 @@
 #define BUFFER_SIZE (BUFFER_WIDTH_IN_TILES * TILE_WIDTH * BUFFER_HEIGHT_IN_TILES * TILE_HEIGHT)
 #define RLE_MASK 0x0000000000000001
 
+#if defined(DEBUG) && DEBUG > 0
+ #define DEBUG_PRINT(fmt, ...) fprintf(stdout, "DEBUG: %s:%d:%s(): " fmt, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
+#else
+ #define DEBUG_PRINT(fmt, ...)
+#endif
+
 enum rle_error_t
 {
     NO_ERROR,
@@ -105,7 +111,7 @@ void write_buffer(const uint64_t source, int16_t bitcount, struct bit_buffer_t *
     }
     if (output->byte_index >= output->size)
     {
-        printf("ERROR: Write buffer full\n");
+        fprintf(stderr, "Write buffer full\n");
         return;
     }
     if (bitcount > 0)
@@ -179,7 +185,7 @@ enum rle_error_t rle_decode(struct bit_buffer_t *const inputstream, const uint8_
 
     if (inputstream->byte_index == inputstream->size)
     {
-        printf("ERROR: Packet type occurs at end of data stream\n");
+        fprintf(stderr, "Packet type occurs at end of data stream\n");
         return UNEXPECTED_EOF;
     }
 
@@ -216,7 +222,7 @@ enum rle_error_t rle_decode(struct bit_buffer_t *const inputstream, const uint8_
 
             if(bit_count)
             {
-                printf("ERROR: Incomplete RUN data\n");
+                fprintf(stderr, "Incomplete RUN data\n");
                 return RUN_EOF;
             }
 
@@ -225,7 +231,7 @@ enum rle_error_t rle_decode(struct bit_buffer_t *const inputstream, const uint8_
 
             if (bits_read > bitplane_size)
             {
-                printf("ERROR: RUN data out of bounds\n");
+                fprintf(stderr, "RUN data out of bounds\n");
                 return RUN_EOF;
             }
 
@@ -244,7 +250,7 @@ enum rle_error_t rle_decode(struct bit_buffer_t *const inputstream, const uint8_
             {
                 if ((inputstream->byte_index + 1) >= inputstream->size)
                 {
-                    printf("ERROR: Incomplete DATA\n");
+                    fprintf(stderr, "Incomplete DATA\n");
                     return DATA_EOF;
                 }
                 bit_pair = ((inputstream->data[inputstream->byte_index] << 1) & 0x02) | (inputstream->data[inputstream->byte_index + 1] >> 7);
@@ -430,7 +436,7 @@ struct sprite_t load_sprite(const char *const filename)
     FILE *fp = fopen(filename, "rb");
     if(fp == NULL)
     {
-        printf("Unable to load file [%s]\n", filename);
+        fprintf(stderr, "Unable to load file [%s]\n", filename);
         return v_sprite;
     }
     fseek(fp, 0L, SEEK_END);
@@ -440,12 +446,12 @@ struct sprite_t load_sprite(const char *const filename)
     fread(input, sizeof(uint8_t), filesize, fp);
     if(ferror(fp))
     {
-        printf("File read failed.\n");
+        fprintf(stderr, "File read failed.\n");
         return v_sprite;
     }
     if(feof(fp))
     {
-        printf("End of file reached successfully.\n");
+        DEBUG_PRINT("%s", "End of file reached successfully.\n");
     }
     fclose(fp);
 
@@ -479,7 +485,8 @@ struct sprite_t load_sprite(const char *const filename)
         BP1 = BUF_B;
     }
 
-    printf("Decoding %ux%u tile sprite.\nPrimary buffer: %u\n", v_sprite.width, v_sprite.height, v_sprite.primary_buffer);
+    DEBUG_PRINT("Decoding %ux%u tile sprite.\n", v_sprite.width, v_sprite.height);
+    DEBUG_PRINT("Primary buffer: %u\n", v_sprite.primary_buffer);
     if (rle_decode(&bit_ptr, v_sprite.width, v_sprite.height, BP0) != NO_ERROR)
     {
         return v_sprite;
@@ -492,7 +499,7 @@ struct sprite_t load_sprite(const char *const filename)
         v_sprite.encoding_method = (v_sprite.encoding_method << 1) | ((bit_ptr.data[bit_ptr.byte_index] >> bit_ptr.bit_index) & 0x01);
         advance_bit_index(&bit_ptr, 1);
     }
-    printf("Encoding mode: %u\n", v_sprite.encoding_method);
+    DEBUG_PRINT("Encoding mode: %u\n", v_sprite.encoding_method);
 
     if (rle_decode(&bit_ptr, v_sprite.width, v_sprite.height, BP1) != NO_ERROR)
     {
@@ -581,6 +588,7 @@ void save_sprite(const struct sprite_t *const v_sprite, const uint8_t encoding_m
 void free_sprite(struct sprite_t *const sprite)
 {
     free(sprite->image);
+    sprite->image = NULL;
     sprite->width = 0;
     sprite->height = 0;
 }
