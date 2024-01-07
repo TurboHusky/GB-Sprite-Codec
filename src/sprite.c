@@ -443,15 +443,20 @@ struct sprite_t load_sprite(const char *const filename)
     size_t filesize = ftell(fp);
     uint8_t *input = malloc(filesize);
     fseek(fp, 0L, SEEK_SET);
-    fread(input, sizeof(uint8_t), filesize, fp);
+    size_t bytes_read = fread(input, sizeof(uint8_t), filesize, fp);
     if(ferror(fp))
     {
-        fprintf(stderr, "File read failed.\n");
+        fprintf(stderr, "File read failed\n");
+        return v_sprite;
+    }
+    if(bytes_read < filesize)
+    {
+        fprintf(stderr, "Failed to read all file contents\n");
         return v_sprite;
     }
     if(feof(fp))
     {
-        DEBUG_PRINT("%s", "End of file reached successfully.\n");
+        DEBUG_PRINT("%s", "End of file reached successfully\n");
     }
     fclose(fp);
 
