@@ -13,6 +13,10 @@ target_include_directories(gb_sprite_tests PRIVATE ${CMAKE_SOURCE_DIR}/include $
 target_link_libraries(gb_sprite_tests cmocka gbsprite)
 set_target_properties(gb_sprite_tests PROPERTIES VERSION ${PROJECT_VERSION})
 
+if (CMAKE_C_COMPILER_ID STREQUAL "MSVC")
+    add_custom_command(TARGET gb_sprite_tests POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_RUNTIME_DLLS:gb_sprite_tests> $<TARGET_FILE_DIR:gb_sprite_tests> )
+endif()
+
 enable_testing()
 
 add_test(
