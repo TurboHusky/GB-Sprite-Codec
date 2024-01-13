@@ -367,64 +367,33 @@ void separate_bitplanes(const uint16_t *const image, const size_t image_size, ui
     }
 }
 
-void apply_sprite_offset(uint8_t *const buffer, uint8_t width, uint8_t height)
+void apply_sprite_offset(uint8_t *const buffer, const uint8_t buffer_width, const uint8_t buffer_height, uint8_t *target, const uint8_t target_width, const uint8_t target_height)
 {
-    uint8_t *BUF_A = buffer;
-    uint8_t *BUF_B = buffer + BUFFER_SIZE;
-    uint8_t *BUF_C = buffer + (BUFFER_SIZE << 1);
-
-    size_t width_offset_in_tiles = (BUFFER_WIDTH_IN_TILES - width + 1) >> 1;
-    size_t height_offset_in_tiles = BUFFER_HEIGHT_IN_TILES - height;
-    size_t index = (width_offset_in_tiles * BUFFER_HEIGHT_IN_TILES + height_offset_in_tiles) * TILE_HEIGHT;
-
-    for (uint8_t c = 0; c < width * TILE_WIDTH; c++)
+    size_t width_offset_in_tiles = (buffer_width - target_width + 1) >> 1;
+    size_t height_offset_in_tiles = buffer_height - target_height;  
+    size_t index = (width_offset_in_tiles * buffer_height + height_offset_in_tiles) * TILE_HEIGHT;
+    for (uint8_t c = 0; c < target_width * TILE_WIDTH; c++)
     {
-        for (uint8_t r = 0; r < height * TILE_HEIGHT; r++)
+        for (uint8_t r = 0; r < target_height * TILE_HEIGHT; r++)
         {
-            BUF_A[index] = BUF_B[c * height * TILE_HEIGHT + r];
+            target[index] = buffer[c * target_height * TILE_HEIGHT + r];
             index++;
         }
-        index += (BUFFER_HEIGHT_IN_TILES - height) * TILE_HEIGHT;
-    }
-
-    memset(BUF_B, 0, BUFFER_SIZE);
-    index = (width_offset_in_tiles * BUFFER_HEIGHT_IN_TILES + height_offset_in_tiles) * TILE_HEIGHT;
-    for (uint8_t c = 0; c < width * TILE_WIDTH; c++)
-    {
-        for (uint8_t r = 0; r < height * TILE_HEIGHT; r++)
-        {
-            BUF_B[index] = BUF_C[c * height * TILE_HEIGHT + r];
-            index++;
-        }
-        index += (BUFFER_HEIGHT_IN_TILES - height) * TILE_HEIGHT;
-    }
+        index += (buffer_height - target_height) * TILE_HEIGHT;
+    } 
 }
 
-void remove_sprite_offset(uint8_t *const buffer, uint8_t width, uint8_t height)
+void remove_sprite_offset(uint8_t *const buffer, const uint8_t buffer_width, const uint8_t buffer_height, uint8_t *target, const uint8_t target_width, const uint8_t target_height)
 {
-    uint8_t *BUF_A = buffer;
-    uint8_t *BUF_B = buffer + BUFFER_SIZE;
-    uint8_t *BUF_C = buffer + (BUFFER_SIZE << 1);
-
-    size_t width_offset_in_tiles = (BUFFER_WIDTH_IN_TILES - width + 1) >> 1;
-    size_t height_offset_in_tiles = BUFFER_HEIGHT_IN_TILES - height;
+    size_t width_offset_in_tiles = (buffer_width - target_width + 1) >> 1;
+    size_t height_offset_in_tiles = buffer_height - target_height;
     size_t index = 0;
 
-    for (uint8_t c = 0; c < width * TILE_WIDTH; c++)
+    for (uint8_t c = 0; c < target_width * TILE_WIDTH; c++)
     {
-        for (uint8_t r = 0; r < height * TILE_HEIGHT; r++)
+        for (uint8_t r = 0; r < target_height * TILE_HEIGHT; r++)
         {
-            BUF_C[index] = BUF_B[(( width_offset_in_tiles + c) * BUFFER_HEIGHT_IN_TILES + height_offset_in_tiles) * TILE_HEIGHT + r];
-            index++;
-        }
-    }
-    memset(BUF_B, 0, BUFFER_SIZE);
-    index = 0;
-    for (uint8_t c = 0; c < width * TILE_WIDTH; c++)
-    {
-        for (uint8_t r = 0; r < height * TILE_HEIGHT; r++)
-        {
-            BUF_B[index] = BUF_A[(( width_offset_in_tiles + c) * BUFFER_HEIGHT_IN_TILES + height_offset_in_tiles) * TILE_HEIGHT + r];
+            target[index] = buffer[(( width_offset_in_tiles + c) * buffer_height + height_offset_in_tiles) * TILE_HEIGHT + r];
             index++;
         }
     }
@@ -524,7 +493,9 @@ struct sprite_t load_sprite(const char *const filename)
         }
     }
 
-    apply_sprite_offset(buffer, v_sprite.width, v_sprite.height);
+    apply_sprite_offset(BUF_B, BUFFER_WIDTH_IN_TILES, BUFFER_HEIGHT_IN_TILES, BUF_A, v_sprite.width, v_sprite.height);
+    memset(BUF_B, 0, BUFFER_SIZE);
+    apply_sprite_offset(BUF_C, BUFFER_WIDTH_IN_TILES, BUFFER_HEIGHT_IN_TILES, BUF_B, v_sprite.width, v_sprite.height);
 
     interleave_bitplanes(BUF_A, BUF_B, BUFFER_SIZE, (uint16_t *)BUF_B);
     v_sprite.image = (uint16_t *)malloc(BUFFER_SIZE << 1);
@@ -546,7 +517,8 @@ void save_sprite(const struct sprite_t *const v_sprite, const uint8_t encoding_m
     uint8_t *BP1 = (primary_buffer) ? BUF_B : BUF_C;
 
     separate_bitplanes(v_sprite->image, BUFFER_SIZE, BUF_A, BUF_B);
-    remove_sprite_offset(buffer, v_sprite->width, v_sprite->height);
+    remove_sprite_offset(BUF_B, BUFFER_WIDTH_IN_TILES, BUFFER_HEIGHT_IN_TILES, BUF_C, v_sprite->width, v_sprite->height);
+    remove_sprite_offset(BUF_A, BUFFER_WIDTH_IN_TILES, BUFFER_HEIGHT_IN_TILES, BUF_B, v_sprite->width, v_sprite->height);
 
     if (encoding_method > 1)
     {
