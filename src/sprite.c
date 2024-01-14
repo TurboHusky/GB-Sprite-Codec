@@ -70,17 +70,20 @@ void export_bitplane_to_ppm(const uint8_t *const data, const uint8_t width_in_ti
     fclose(fp);
 }
 
-void export_sprite_to_ppm(const uint16_t *const data, const char *const filename)
+void export_sprite_to_ppm(const struct sprite_t *const sprite, const char *const filename)
 {
+    uint8_t width_offset_in_tiles = (BUFFER_WIDTH_IN_TILES - sprite->width + 1) >> 1;
+    uint8_t height_offset_in_tiles = BUFFER_HEIGHT_IN_TILES - sprite->height;
+
     FILE *fp = fopen(filename, "wb");
-    fprintf(fp, "P6\n%d %d\n255\n", BUFFER_WIDTH_IN_TILES * TILE_WIDTH * PX_PER_BYTE, BUFFER_HEIGHT_IN_TILES * TILE_HEIGHT);
+    fprintf(fp, "P6\n%d %d\n255\n", sprite->width * TILE_WIDTH * PX_PER_BYTE, sprite->height * TILE_HEIGHT);
     uint8_t bw[] = {0xff, 0xff, 0xff, 0xaa, 0xaa, 0xaa, 0x55, 0x55, 0x55, 0x33, 0x33, 0x33};
 
-    for (int y = 0; y < BUFFER_HEIGHT_IN_TILES * TILE_HEIGHT; y++)
+    for (int y = height_offset_in_tiles * TILE_HEIGHT; y < BUFFER_HEIGHT_IN_TILES * TILE_HEIGHT; y++)
     {
-        for (int x = 0; x < BUFFER_WIDTH_IN_TILES * TILE_WIDTH; x++)
+        for (int x = width_offset_in_tiles * TILE_WIDTH; x < (width_offset_in_tiles + sprite->width) * TILE_WIDTH; x++)
         {
-            uint16_t pixels = data[y + x * BUFFER_HEIGHT_IN_TILES * TILE_HEIGHT];
+            uint16_t pixels = sprite->image[y + x * BUFFER_HEIGHT_IN_TILES * TILE_HEIGHT];
             for (int shift = 14; shift >= 0; shift -= 2)
             {
                 uint16_t index = (pixels >> shift) & 0x03;
@@ -554,9 +557,14 @@ void save_sprite(const struct sprite_t *const v_sprite, const uint8_t encoding_m
         compressedImage.byte_index++;
     }
 
-    FILE *rfp = fopen(filename, "wb");
-    fwrite(compressedImage.data, sizeof(uint8_t), compressedImage.byte_index, rfp);
-    fclose(rfp);
+    FILE *fp = fopen(filename, "wb");
+    if(fp == NULL)
+    {
+        fprintf(stderr, "Unable to open file [%s] for writing\n", filename);
+        return;
+    }
+    fwrite(compressedImage.data, sizeof(uint8_t), compressedImage.byte_index, fp);
+    fclose(fp);
 
     free(compressedImage.data);
     free(buffer);
