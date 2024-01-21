@@ -466,6 +466,7 @@ struct sprite_t load_sprite(const char *const filename)
     DEBUG_PRINT("Primary buffer: %u\n", v_sprite.primary_buffer);
     if (rle_decode(&bit_ptr, v_sprite.width, v_sprite.height, BP0) != NO_ERROR)
     {
+        free_sprite(&v_sprite);
         return v_sprite;
     }
     v_sprite.encoding_method = (bit_ptr.data[bit_ptr.byte_index] >> bit_ptr.bit_index) & 0x01;
@@ -480,6 +481,7 @@ struct sprite_t load_sprite(const char *const filename)
 
     if (rle_decode(&bit_ptr, v_sprite.width, v_sprite.height, BP1) != NO_ERROR)
     {
+        free_sprite(&v_sprite);
         return v_sprite;
     }
 
